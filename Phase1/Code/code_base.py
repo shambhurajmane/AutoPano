@@ -171,3 +171,107 @@ def feature_descriptor(image, corner):
 		# 	feature = np.vstack((feature, patch))
 	create_visualization(visualize, Labeled, 3, (10, 10), "patch.png")
 	return feature_dict
+
+
+def Compute_H_matrix(p_list, p_dash_list,is_SVD=False):
+	"""	
+	This function calculates Homography matrix using 2 methods solving linear equations and using SVD.
+	This function calculates Homography matrix from first 4 points from 2 given lists.
+	input:
+	p_lis, p_dash_list : python lists of input points 	
+	p_dash = H_matrix * p
+	each value in p_list and P_dash_list is a tuple(x,y)
+	for reference please check: https://math.stackexchange.com/questions/494238/how-to-compute-homography-matrix-h-from-corresponding-points-2d-2d-planar-homog
+	
+	output: H is Homogenous matrix in np array format
+	"""
+	A_matrix_list = []
+	
+	for point_index in(range(len(p_list))): 
+		
+		row_1 = [p_list[point_index][0],p_list[point_index][1], 1,  
+				 0,0,0, 
+				(-p_dash_list[point_index][0] * p_list[point_index][0]) , (-p_dash_list[point_index][0] * p_list[point_index][1]),-p_dash_list[point_index][0]]
+
+		row_2 = [0,0,0, 
+				 p_list[point_index][0],p_list[point_index][1], 1,
+		 		(-p_dash_list[point_index][1] * p_list[point_index][0]) , (-p_dash_list[point_index][1] * p_list[point_index][1]),-p_dash_list[point_index][1]]
+
+		
+		A_matrix_list.append(row_1)
+		A_matrix_list.append(row_2)
+	#A_matrix_list.append([0,0,0, 0,0,0, 0,0,1])	
+	A_matrix = np.matrix(A_matrix_list)
+	#b = b = [0]*8 + [1]
+	#H = np.reshape(np.linalg.solve(A_matrix, b), (3,3))
+	
+	_, _, V = np.linalg.svd(A_matrix)
+	H = V[-1, :]
+	H = H.reshape((3,3))
+	H = H/ H[2,2]
+
+	return H
+
+
+def compute_inliers(p_list,p_dash_list, H_matrix, ssd_threshold):
+	
+	keypoint_list = []	
+	for i in range(len(p_list)):
+		point = p_list[i].copy() 		
+		point.append(1)
+		point_np = np.array(point)
+		point_np = point_np.reshape(3,1)
+		#print(point_np.shape)
+		#print(H_matrix.shape)
+		predicted_point = np.dot(H_matrix, point_np)	
+		#print(predicted_point)
+		#print(p_dash_list[i])
+
+		#p1 = np.transpose(np.matrix([p_list[i][0], p_list[i][1], 1]))
+		#predicted_point = np.dot(H_matrix, p1)
+		#p2 = np.transpose(np.matrix([p_dash_list[i][0], p_dash_list[i][1], 1]))
+		#ssd = np.linalg.norm((predicted_point - p2))
+
+		ssd = np.sqrt( (p_dash_list[i][0] - predicted_point[0])**2 + (p_dash_list[i][1] - predicted_point[1])**2)		
+		#print(p_list[i])
+		#print(p_dash_list[i])
+		#print(predicted_point)
+		#print(ssd)
+		#print("*****")
+		if ssd <= ssd_threshold:
+			keypoint_list.append({'src_point' :p_list[i], 'dst_point': p_dash_list[i],'is_inlier': 1})
+		else:
+			keypoint_list.append({'src_point' :p_list[i], 'dst_point': p_dash_list[i],'is_inlier': 0})
+			
+	return keypoint_list
+
+def RANSAC_Homography(src_point_list, dst_point_list, maxIters, ssd_threshold):
+	"""
+	This funciton calculates Homography matrix using RANSAC method.
+	Input: 2 lists of descriptor points of 2 images
+	src_point_list : Coordinates of the points in the source image.
+	dst_point_list: Coordinates of the corresponding points in the destination image.
+	maxIters: Maximum number of RANSAC iterations. 
+
+	Output: 
+	Homography matrix
+	mask: Optional output mask set by the RANSAC algorithm to indicate inliers and outliers.	
+	"""
+	max_inliers_list = []	
+	for iteration in range(maxIters):		
+		#print(src_point_list)
+		#print(dst_point_list)
+		index_list = random.sample(range(0,len(src_point_list)),4)		
+		rand_src_points = [src_point_list[i] for i in index_list]
+		rand_dst_points = [dst_point_list[i] for i in index_list] 
+
+		H_matrix = Compute_H_matrix(rand_src_points,rand_dst_points,is_SVD=False)
+
+		key_point_list = compute_inliers(src_point_list,dst_point_list, H_matrix, ssd_threshold )
+				
+		if len([d  for d in max_inliers_list if d['is_inlier'] == 1]) <= len([d  for d in key_point_list if d['is_inlier'] == 1]):
+			max_inliers_list = key_point_list
+			final_h = H_matrix
+	
+	
+	return final_h, max_inliers_list
